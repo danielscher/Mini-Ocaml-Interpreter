@@ -86,6 +86,8 @@ let rec check env e : ty = match e with
     t' = t2
   and check_e2_rec env f t1 t2 e2 = check (update env f (Arrow(t1,t2))) e2;;
 
+
+
 (*~~~~~~Type checker tests~~~~~~~*)
 
 (*
@@ -103,8 +105,6 @@ let test1 = check empty
 )
 ) = Int;;
 
-*)
-
 
 let test2 = check empty
   (Letrecty ("fac", "a", Int, Arrow(Int,Int), 
@@ -113,6 +113,11 @@ let test2 = check empty
                         Fapp (Fapp (Var "fac", Oapp (Mul, Var "n", Var "a")),
                               Oapp (Sub, Var "n", Con (Icon 1))))),
              Fapp (Fapp (Var "fac", Con (Icon 1)), Con (Icon 4)))) = Int;;
+
+
+*)
+
+
 
 (*~~~~~~~~~~~~~MOCaml evaluator~~~~~~~~~~~~~~~*)
 
