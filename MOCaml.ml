@@ -1,6 +1,8 @@
 open String
 open List
 
+let fst (a,b) = a;;
+
 (*MOCaml abstract syntax and types*)
 
 type ('a,'b) env = ('a * 'b) list;; (*polymorphic environment for evl and typ*)
@@ -34,6 +36,17 @@ let rec lookup (env : ('a,'b) env) a = match env with
 
 (*~~~~~~~~~~~~~MOCaml type checker~~~~~~~~~~~~~~~*)
 
+(*linearizes ty*)
+let rec lint t = match t with
+  |Bool -> "Bool"
+  |Int -> "Int"
+  |Arrow(t1,t2) -> "Arrow (" ^ lint t1 ^ "," ^ lint t2 ^ ")"
+
+(*raises an exception with t1 result type and t2 the expected type*)
+let err_letrecty t1 t2 = 
+  let s = "Letrecty : type mismatch. expected " ^ lint t2 ^ " but was " ^ lint t1 in
+  failwith s;;
+
 let rec check env e : ty = match e with
   |Var x -> check_var env x
   |Con (Bcon b) -> Bool
@@ -45,31 +58,37 @@ let rec check env e : ty = match e with
   |Lamty (x,t,e) -> Arrow (t,check (update env x t) e)
   |Let (x,e1,e2) -> check (update env x (check env e1)) e2
   |Letrec (f,x,e1,e2) -> failwith "check: letrec is missing type"
-  |Letrecty (f,x,t1,t2,e1,e2) -> if check_e1_rec env f x t1 t2 e1 then check (update env f (Arrow(t1,t2))) e2 else failwith "letrec"
-                               (*^ first checks if e1 derives to t2 then checks e2*)
+  |Letrecty (f,x,t1,t2,e1,e2) -> 
+    let env1 = update env f (Arrow(t1,t2)) in
+    if check (update env1 x t1) e1 = t2 then check (update env f (Arrow(t1,t2))) e2
+    else err_letrecty t2 (check (update env1 x t1) e1)
   and check_op o t1 t2 = match o,t1,t2 with (*checks if both arguments are ints*)
   |Add, Int, Int -> Int
   |Sub, Int, Int -> Int
   |Mul, Int, Int -> Int
   |Leq, Int, Int -> Bool
-  |_,_,_ -> failwith "checkop"
+  |_,_,_ -> failwith "checkop: unknown operator"
   and check_fun t t' = match t with
   |Arrow (t1,t2) -> if t1 = t' then t2 else failwith "check_fun: type mismatch"
   |_ -> failwith "check_fun: type mismatch"
   and check_var env x =
   let t' = lookup env x in
     begin match t' with 
-      |Some a -> a
-      |None -> failwith "check_var"
+      |Some b -> b
+      |None -> failwith ("check_var: " ^ x ^ "is not in env")
     end
   and check_ite t1 t2 t3 = match t1 with
   |Bool -> if t2 = t3 then t2 else failwith "ite: e2 is not the same type as e3"
   |_-> failwith "ite: e1 bool expected"
-  and check_e1_rec env f x t1 t2 e1 =check (update (update env f (Arrow(t1,t2))) x t1 ) e1 = t2 (* extends the env with the types of f then x*);;
+  and check_e1_rec env f x t1 t2 e1 = 
+    let env1 = update (update env f (Arrow(t1,t2))) x t1 in 
+    let t' = check env1 e1 in
+    t' = t2
+  and check_e2_rec env f t1 t2 e2 = check (update env f (Arrow(t1,t2))) e2;;
 
 (*~~~~~~Type checker tests~~~~~~~*)
 
-(*(fun x -> x*2) 5 :int*)
+
 let test1 = check empty 
 (Fapp(
   Lamty(
@@ -82,24 +101,14 @@ let test1 = check empty
 )
 ) = Int;;
 
-(** TODO : THROWS EXCEPTION CHECK OP
-(*Let rec fac n = if n<1 then 1 else n*fac(n-1) : int*)
-let test2 = check empty (
-  Letrecty ("fac", "n", Int, (Arrow(Int,Int)),
-    If (Oapp (Leq, Var "n" , (Con(Icon(1)))),
-      Con (Icon(1)),
-      Oapp(Mul, Var "n" , Fapp(Var "fac" ,Oapp (Sub,Var "n" ,Con(Icon(1)))))),
-    Fapp (Var "fac",Con (Icon(5)))
-  )
-);;*)
 
-let test3 = check empty
+let test2 = check empty
   (Letrecty ("fac", "a", Int, Arrow(Int,Int), 
              Lamty ("n", Int,
                     If (Oapp (Leq, Var "n", Con (Icon 1)), Var "a",
                         Fapp (Fapp (Var "fac", Oapp (Mul, Var "n", Var "a")),
                               Oapp (Sub, Var "n", Con (Icon 1))))),
-             Fapp (Fapp (Var "fac", Con (Icon 1)), Con (Icon 4))));;
+             Fapp (Fapp (Var "fac", Con (Icon 1)), Con (Icon 4)))) = Int;;
 
 (*~~~~~~~~~~~~~MOCaml evaluator~~~~~~~~~~~~~~~*)
 
@@ -141,59 +150,93 @@ and eval_letrec v1 e2 = match v1 with
 
 
 (*~~~~~~~~~~~~~Evaluation tests~~~~~~~~~~~~~~~~~*)
-(*test If expression evals to false*)
-let test4 = eval empty
-(Oapp(Leq,Con (Icon(1)),Con(Icon(5))));;
 
 
+(*
+
+
+let test3 = eval empty
+(Oapp(Leq,Con (Icon(10)),Con(Icon(5)))) = Bval(false);;
 let test4 = eval empty
+(Oapp(Leq,Con (Icon(1)),Con(Icon(5)))) = Bval(true)
+
+
+
+let test5 = eval empty
   (Letrec ("fac", "a",
            Lam ("n",
                 If (Oapp (Leq, Var "n", Con (Icon 1)), Var "a",
                     Fapp (Fapp (Var "fac", Oapp (Mul, Var "n", Var "a")),
                           Oapp (Sub, Var "n", Con (Icon 1))))),
-           Fapp (Fapp (Var "fac", Con (Icon 1)), Con (Icon 4))));;
+           Fapp (Fapp (Var "fac", Con (Icon 1)), Con (Icon 4)))) = Ival(24)
 
 
-(*evals to 25*)
-let test5 = eval empty
+
+let test6 = eval empty
     (Let ("x" , Con (Icon (5)),
        Oapp(Mul, Con (Icon (5)),Var "x")
           )
-    );;
+    ) = Ival (25);;
 
 
+*)
+
+
+
+(*~~~~~~~~~Character related functions~~~~~~~~~~~~~~~~~~*)
+
+(*checks if the character is whitespace*)
+  let whitespace c = Char.code c = 32 || Char.code c = 9 
+|| Char.code c = 10|| Char.code c = 95 || Char.code c = 39 || Char.code c = 13
+
+
+(*checks if the character is a digit*)
+let digit c = let ascii = Char.code c in 
+  ascii >= 48 && ascii <= 57;;
+
+
+(*checks if the character is an lower case letter*)
+let lc_char c = let ascii = Char.code c in 
+ascii >= 97 && ascii <= 122;;
+
+
+(*checks if the character is an upper case letter*)
+let uc_char c = let ascii = Char.code c in 
+ascii >= 65 && ascii <= 90;;
+
+
+(*checks wether c is a legal character in id*)
+let legal_id_char c = digit c || lc_char c || uc_char c 
+
+
+(*returns the corresponding int from the char c*)
+let num c = match Char.code c with
+  |48 -> 0
+  |49 -> 1
+  |50 -> 2
+  |51 -> 3
+  |52 -> 4
+  |53 -> 5
+  |54 -> 6
+  |55 -> 7
+  |56 -> 8
+  |57 -> 9
+  |_ -> failwith "num: expected ascii of a digit";;
 
 
 (*~~~~~~~~~~~~~TOKEN CONSTRUCTORS~~~~~~~~~~~~~~~~~*)
+
+
 type const = BCON of bool | ICON of int
 type token = LP | RP | EQ | COL | ARR | ADD 
             | SUB | MUL | LEQ | IF | THEN | ELSE 
             | LAM | LET | IN | REC | CON of const 
             | VAR of string | BOOL | INT ;;
 
-let whitespace c = Char.code c = 32 || Char.code c = 9 || Char.code c = 10|| Char.code c = 95 || Char.code c = 39 || Char.code c = 13
-let digit c = let ascii = Char.code c in 
-    ascii >= 48 && ascii <= 57;;
-let lc_char c = let ascii = Char.code c in 
-ascii >= 97 && ascii <= 122;;
-let uc_char c = let ascii = Char.code c in 
-ascii >= 65 && ascii <= 90;;
-let legal_id_char c = digit c || lc_char c || uc_char c 
-let num c = match Char.code c with
-    |48 -> 0
-    |49 -> 1
-    |50 -> 2
-    |51 -> 3
-    |52 -> 4
-    |53 -> 5
-    |54 -> 6
-    |55 -> 7
-    |56 -> 8
-    |57 -> 9
-    |_ -> failwith "num: expected ascii of a digit";;
-    
+
 (*~~~~~~~~~~~~~~~~~~~~~Lexer~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*)
+
+
   let lex s : token list =
     let get i = String.get s i in
     let getstr i n = String.sub s (i-n) n  in
@@ -244,17 +287,51 @@ let num c = match Char.code c with
 
 
 (*~~~~~~~~~~~~~~~~~~~~~Lexer Tests~~~~~~~~~~~~~~~~~~~~~~~~*)
-let str1 = "x";;
-let str2 =
-  "let rec pow n e = if e <= 1 then 1 else n * pow n (e-1)";;
 
-let test = lex str1;;
+(*
+
+let letrecS = "let rec f (x : int) : int = x + 2 in f 2";;
+let test7 = lex letrecS = [LET; REC; VAR "f"; LP; VAR "x"; COL; INT; RP; COL; INT; EQ; VAR "x"; ADD;
+CON (ICON 2); IN; VAR "f"; CON (ICON 2)];;
+
+*)
+
+
+
+(*~~Linearizes tokens~~*)
+let lint t = match t with
+|LP  -> "LP"
+|RP ->  "RP"
+|EQ -> "EQ"
+|COL -> "COL"
+|ARR -> "ARR"
+|ADD -> "ADD"
+|SUB -> "SUB"
+|MUL -> "MUL"
+|LEQ -> "LEQ"
+|IF -> "IF"
+|THEN -> "THEN"
+|ELSE -> "ELSE"
+|LAM  -> "LAM"
+|LET  -> "LET"
+|IN  -> "IN"
+|REC -> "REC"
+|CON x -> "CON"
+|VAR x -> "VAR"
+|BOOL -> "BOOL"
+|INT -> "INT" ;;
+
+(*throws an exception when expected token t is not matched with actual token t'*)
+let err_verify t t' = let s = "expected token is " ^ lint t ^ " but was " ^ lint t' in
+  failwith s;;
+
+let verify t l = match l with 
+  |t'::l -> if t' = t then l else err_verify t t'
+  |[]-> failwith "Verify: Token list is empty";;
+
 
 (*~~~~~~~~~~~~~~~~Recursive decent parser~~~~~~~~~~~~~~~~~~~~~~~*)
 
-let verify t l = match l with 
-  |t'::l -> if t' = t then l else failwith "Verify: expected Token not found"
-  |[]-> failwith "Verify: Token list is empty"
 
 let rec parse l : (exp * token list) = match l with            (*top level parser*)
   |IF::l -> 
@@ -270,17 +347,17 @@ let rec parse l : (exp * token list) = match l with            (*top level parse
     let (e1,l) = parse l in
     let (e2,l) = parse (verify IN l) in
     (Letrec(f,x,e1,e2),l)
-  |LET::REC::VAR(f)::LP::VAR(x)::COL::EQ::l ->
+  |LET::REC::VAR(f)::LP::VAR(x)::COL::l ->
     let (t1,l) = tparse l in
-    let (t2,l) = tparse (verify RP l) in
-    let (e1,l) = parse (verify EQ l) in
+    let (t2,l) = tparse (verify COL l) in
+    let (e1,l) = parse l in
     let (e2,l) = parse (verify IN l) in
-    (Letrecty(f,x,t1,t2,e1,e2),l)
+    (Letrecty (f,x,t1,t2,e1,e2),l)
   |LAM::VAR(x)::ARR::l -> 
     let (e,l) = parse l in (Lam (x,e),l)
-  |LAM::VAR(x)::COL::l -> 
+  |LAM::LP::VAR(x)::COL::l -> 
     let (t1,l) = tparse l in
-    let (e,l) = parse (verify EQ l) in 
+    let (e,l) = parse (verify ARR l) in 
     (Lamty(x,t1,e),l)
   |l -> cparse l
   and cparse l = let (e,l) = sparse l in cparse' e l            (*comparison level parsing*)
@@ -312,20 +389,42 @@ let rec parse l : (exp * token list) = match l with            (*top level parse
     |_ -> failwith "pparse: could not parse"
 and tparse l = let (t,l) = ptparse l in tparse' t l             (*type parser*)
 and tparse' t l = match l with                                  (*function type level parsing*)
-  |ARR::l -> let (t2,l) = tparse l in (Arrow(t,t2),l)
-  |[] -> failwith "tparse' : Arrow type missing t2"
-  |_->ptparse l
+  |x::l ->  if x = ARR then 
+    let (t2,l) = tparse l in (Arrow(t,t2),l) 
+    else (t,l) 
+  |[] -> (t,l) 
 and ptparse l = match l with                                    (*primitive type level parsing*)
   |BOOL::l -> Bool,l
   |INT::l -> Int,l
-  |t::l-> tparse l
-  |_-> failwith "ptparse: expected type TOKEN"
-
-let testp1 = parse (lex str1)
+  |LP::l-> tparse l
+  |_ -> failwith "ptparse: expected type TOKEN";;
 
 
+(*~~~~~~~~~~~~~~~~~~~~~Parser Tests~~~~~~~~~~~~~~~~~~~~~~~~*)
 
-let fst (a,b) = a;;
+(*
+
+let testparse = parse [LET; REC; VAR "f"; LP; VAR "x"; COL; INT; RP; COL; INT; EQ; VAR "x"; ADD;
+CON (ICON 2); IN; VAR "f"; CON (ICON 2)] = 
+  (Letrecty ("f", "x", Int, Int, Oapp (Add, Var "x", Con (Icon 2)),
+    Fapp (Var "f", Con (Icon 2))),
+  [])
+
+*)
+
 
 let checkstr s = check empty (fst(parse (lex s)));;
 let evalstr s = eval empty (fst(parse (lex s)));;
+
+
+(*tests*)
+
+
+(*
+
+let fac = "let rec fac (a:int) : int->int = fun (n:int) -> if n <= 1 then a else fac (a*n) (n-1) in fac 1 5";;
+
+let test_fac_type = checkstr fac  = Int;;
+let test_fac_val = evalstr fac = Ival(120);;
+
+*)
