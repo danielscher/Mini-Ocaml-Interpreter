@@ -88,6 +88,8 @@ let rec check env e : ty = match e with
 
 (*~~~~~~Type checker tests~~~~~~~*)
 
+(*
+
 
 let test1 = check empty 
 (Fapp(
@@ -100,6 +102,8 @@ let test1 = check empty
    Con (Icon(5))
 )
 ) = Int;;
+
+*)
 
 
 let test2 = check empty
